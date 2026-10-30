@@ -1,0 +1,15 @@
+#!/bin/sh
+#
+# Wireless vifs are created long after boot (wifi reload, sta_wifi switching
+# between AP and STA). Re-apply "power save off" and "max TX power" on every
+# interface-up so a late vif never comes up with power save enabled.
+
+[ "$ACTION" = "ifup" ] || exit 0
+[ -x /usr/sbin/iw ] || exit 0
+
+for dev in $(iw dev 2>/dev/null | awk '$1 == "Interface" { print $2 }'); do
+	iw dev "$dev" set power_save off 2>/dev/null
+	iw dev "$dev" set txpower fixed 2000 2>/dev/null
+done
+
+exit 0

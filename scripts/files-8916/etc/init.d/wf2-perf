@@ -1,0 +1,68 @@
+#!/bin/sh /etc/rc.common
+#
+# WF2 performance defaults
+#   1. TCP BBR congestion control (paced by the fq qdisc)
+#   2. WiFi power save off
+#   3. TX power pinned to the maximum the regulatory domain allows
+#
+# Runs late in boot so the wireless vifs already exist. Interfaces that appear
+# afterwards are covered by /etc/hotplug.d/iface/98-wf2-wifi-ps.
+
+START=99
+STOP=10
+
+# 2000 mBm = 20 dBm. cfg80211 clamps this to min(regulatory max, driver max),
+# so asking for more than the hardware can deliver is harmless.
+MAX_TXPOWER_MBM=2000
+DEFAULT_COUNTRY=CN
+
+log() { logger -t wf2-perf "$@"; }
+
+wlan_list() {
+	iw dev 2>/dev/null | awk '$1 == "Interface" { print $2 }'
+}
+
+apply_reg() {
+	[ -x /usr/sbin/iw ] || return 0
+	cc="$(uci -q get wireless.radio0.country)"
+	[ -n "$cc" ] || cc="$DEFAULT_COUNTRY"
+	iw reg set "$cc" 2>/dev/null
+}
+
+apply_bbr() {
+	grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null ||
+		modprobe tcp_bbr 2>/dev/null
+
+	grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || {
+		log "bbr unavailable, congestion control left as is"
+		return 0
+	}
+
+	echo bbr > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+}
+
+apply_wifi() {
+	[ -x /usr/sbin/iw ] || return 0
+	for dev in $(wlan_list); do
+		iw dev "$dev" set power_save off 2>/dev/null
+		iw dev "$dev" set txpower fixed "$MAX_TXPOWER_MBM" 2>/dev/null
+	done
+}
+
+start() {
+	apply_reg
+	apply_bbr
+	apply_wifi
+
+	cc="$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)"
+	qd="$(cat /proc/sys/net/core/default_qdisc 2>/dev/null)"
+	log "congestion_control=${cc:-?} default_qdisc=${qd:-?} wlan='$(wlan_list | tr '\n' ' ')'"
+}
+
+stop() {
+	:
+}
+
+restart() {
+	start
+}

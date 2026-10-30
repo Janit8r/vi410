@@ -15,6 +15,10 @@ git clone https://github.com/lkiuyu/DbusSmsForwardCPlus package/DbusSmsForwardCP
 
 # 北大源
 cp -r "$GITHUB_WORKSPACE/scripts/files-8916" "$GITHUB_WORKSPACE/openwrt/files"
+# 保证 init.d / hotplug.d 下的脚本可执行，不依赖 git 里记录的文件模式
+find "$GITHUB_WORKSPACE/openwrt/files/etc/init.d" \
+     "$GITHUB_WORKSPACE/openwrt/files/etc/hotplug.d" \
+     -type f -exec chmod 0755 {} + 2>/dev/null
 ls -R "$GITHUB_WORKSPACE/openwrt/files"
 
 

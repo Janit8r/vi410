@@ -1,0 +1,3 @@
+# The device runs these with /bin/sh — a CRLF shebang is a hard failure.
+*.sh                  text eol=lf
+scripts/files-8916/** text eol=lf

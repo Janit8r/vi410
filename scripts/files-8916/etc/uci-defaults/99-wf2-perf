@@ -1,0 +1,15 @@
+#!/bin/sh
+# First-boot setup for the WF2 performance defaults.
+
+# Regulatory domain. Without it the kernel stays on the "world" domain, which
+# blocks channels 12/13 and applies the lowest common EIRP limit.
+if uci -q get wireless.radio0 >/dev/null 2>&1; then
+	[ -n "$(uci -q get wireless.radio0.country)" ] || \
+		uci set wireless.radio0.country='CN'
+	uci commit wireless
+fi
+
+chmod +x /etc/init.d/wf2-perf 2>/dev/null
+/etc/init.d/wf2-perf enable 2>/dev/null
+
+exit 0
