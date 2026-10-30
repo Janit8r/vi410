@@ -1,0 +1,67 @@
+#!/bin/sh /etc/rc.common
+#
+# WiFi 兜底拉起。
+#
+# 开机顺序是：S10boot 里先 `wifi config`（此时 wcn36xx 还没加载，没有 phy0），
+# 然后才 kmodloader 加载模块。ieee80211 热插拔的 10-wifi-detect 会补一次，
+# 但只要那一次失败（board.json 还没生成、phy 还没注册完、netifd 还没 reload）
+# 后面就没有第二次机会了，结果就是「有 phy 没有 AP」——搜不到 SSID。
+#
+# 这里等 phy0 出现后反复重试，并且把 SSID / 认证方式固定下来，
+# 避免自动探测生成出意料之外的配置。
+
+START=95
+STOP=10
+
+LOG=/root/wifi.log
+
+log() { echo "$(date '+%F %T') $*" >>"$LOG"; }
+
+start() {
+	(
+		i=0
+		while [ $i -lt 90 ]; do
+			[ -d /sys/class/ieee80211/phy0 ] && break
+			sleep 2
+			i=$((i + 1))
+		done
+
+		if [ ! -d /sys/class/ieee80211/phy0 ]; then
+			log "FAIL: phy0 never appeared after 180s"
+			dmesg | tail -150 > /root/dmesg.log 2>/dev/null
+			return
+		fi
+		log "phy0 present after $((i * 2))s"
+
+		j=0
+		while [ $j -lt 6 ]; do
+			/sbin/wifi config >/dev/null 2>&1
+
+			for s in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
+				uci -q set wireless.$s.disabled='0'
+				uci -q set wireless.$s.country='CN'
+			done
+			for s in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+				uci -q set wireless.$s.disabled='0'
+				uci -q set wireless.$s.mode='ap'
+				uci -q set wireless.$s.ssid='ImmortalWrt'
+				uci -q set wireless.$s.encryption='none'
+				uci -q set wireless.$s.network='lan'
+			done
+			uci -q commit wireless 2>/dev/null
+
+			/sbin/wifi up >/dev/null 2>&1
+			sleep 3
+			if iw dev 2>/dev/null | grep -q 'type AP'; then
+				log "AP up on attempt $((j + 1))"
+				break
+			fi
+			j=$((j + 1))
+		done
+
+		iw dev > /root/wifi-state.log 2>&1
+		uci -q show wireless >> /root/wifi-state.log 2>&1
+		dmesg > /root/dmesg.log 2>&1
+		log "done, AP=$(iw dev 2>/dev/null | grep -c 'type AP')"
+	) &
+}

@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# 覆盖 rootfs-resizer 包自带的 /etc/uci-defaults/00_rootfs_resizer。
+#
+# 原版结尾是 `apk del rootfs-resizer; reboot`：
+#   1) uci-defaults 是按文件名顺序执行的，它排在 00_，一 reboot 后面的
+#      99-modem-setup / openstick_tweak / 99-wf2-perf 全都不执行；
+#   2) 一旦 apk del 失败，脚本留在原地，下次开机再 resize 再 reboot —— 无限重启。
+#
+# 这里保留扩容，但去掉 reboot，并且自己删掉本脚本，保证只跑一次。
+
+rootpart=$(findmnt -n -o SOURCE /)
+rootfstype=$(findmnt -n -o FSTYPE /)
+
+if [ "$rootfstype" != "ext4" ]; then
+	rm -f /etc/uci-defaults/00_rootfs_resizer
+	exit 0
+fi
+
+mount -o ro,remount / 2>/dev/null
+tune2fs -O^resize_inode "$rootpart" 2>/dev/null
+mount -o rw,remount / 2>/dev/null
+resize2fs "$rootpart" 2>/dev/null
+
+rm -f /etc/uci-defaults/00_rootfs_resizer
+exit 0

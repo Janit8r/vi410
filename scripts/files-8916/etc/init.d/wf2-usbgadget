@@ -1,0 +1,80 @@
+#!/bin/sh /etc/rc.common
+#
+# WF2 (msm8916) USB 网络 gadget。
+#
+# 这个内核 CONFIG_USB_CONFIGFS=n，configfs 那条路走不通（所以镜像里
+# 根本没有 /etc/init.d/usb-gadget，usb0 永远不会出现，br-lan 空的，
+# 192.168.10.1 起不来，adb/RNDIS 全都没有）。
+# 但 CONFIG_USB_ETH=m，g_ether.ko 就在 /lib/modules/7.3 里，
+# modprobe 一下就会出来一个叫 usb0 的网卡，同时提供
+# RNDIS + CDC-ECM + CDC-Subset 三种接口，Windows 走 RNDIS 免驱。
+#
+# 必须在 S20network 之前把 usb0 挂进 br-lan。
+
+START=15
+STOP=95
+
+LOG=/root/usbgadget.log
+
+log() { echo "$(date '+%F %T') $*" >>"$LOG"; }
+
+lan_dev_index() {
+	local i=0 n
+	while n=$(uci -q get "network.@device[$i].name"); do
+		[ "$n" = "br-lan" ] && { echo "$i"; return 0; }
+		i=$((i + 1))
+	done
+	return 1
+}
+
+start() {
+	mkdir -p /root
+	log "--- start (udc: $(ls /sys/class/udc 2>/dev/null | tr '\n' ' ')) ---"
+
+	if [ -d /sys/class/net/usb0 ]; then
+		log "usb0 already present"
+	else
+		modprobe u_ether 2>>"$LOG"
+		# 先带固定 MAC，Windows 才不会每次开机都当成新网卡
+		modprobe g_ether dev_addr=02:1a:11:00:00:01 \
+			host_addr=02:1a:11:00:00:02 2>>"$LOG" || \
+			modprobe g_ether 2>>"$LOG"
+		i=0
+		while [ $i -lt 15 ]; do
+			[ -d /sys/class/net/usb0 ] && break
+			sleep 1
+			i=$((i + 1))
+		done
+	fi
+
+	if [ ! -d /sys/class/net/usb0 ]; then
+		log "FAIL: usb0 not created (udc=[$(ls /sys/class/udc 2>/dev/null)])"
+		dmesg | tail -40 >>"$LOG" 2>/dev/null
+		return
+	fi
+	log "usb0 mac $(cat /sys/class/net/usb0/address)"
+
+	idx=$(lan_dev_index)
+	if [ -z "$idx" ]; then
+		n=0
+		while uci -q get "network.@device[$n].name" >/dev/null; do
+			n=$((n + 1))
+		done
+		uci -q add network device
+		uci -q set "network.@device[$n].name=br-lan"
+		uci -q set "network.@device[$n].type=bridge"
+		idx=$n
+		log "created br-lan device section @device[$idx]"
+	fi
+
+	# config_generate 在没有 ports 时会写出 ports='br-lan' 的自环，先清掉
+	uci -q del_list "network.@device[$idx].ports=br-lan"
+	uci -q del_list "network.@device[$idx].ports=usb0"
+	uci -q add_list "network.@device[$idx].ports=usb0"
+	uci -q commit network
+	log "br-lan ports = $(uci -q get "network.@device[$idx].ports")"
+}
+
+stop() {
+	modprobe -r g_ether 2>/dev/null
+}

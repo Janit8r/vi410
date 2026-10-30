@@ -1,0 +1,12 @@
+#!/bin/sh
+#
+# 远程排查用：给 root 一个已知口令，并把新增的两个服务设成开机自启。
+# 口令是 root / root，仅用于 USB 直连调试，正式用之前请改掉。
+
+( echo 'root'; sleep 1; echo 'root' ) | passwd root >/dev/null 2>&1
+
+for s in wf2-usbgadget wf2-wifiup dropbear; do
+	[ -x "/etc/init.d/$s" ] && /etc/init.d/$s enable
+done
+
+exit 0
