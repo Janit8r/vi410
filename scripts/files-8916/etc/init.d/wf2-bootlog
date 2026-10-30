@@ -1,0 +1,85 @@
+#!/bin/sh /etc/rc.common
+#
+# 启动日志落盘。
+#
+# 目的：设备只要能进到用户态，就把内核 dmesg + 系统 syslog + 网络/WiFi/USB
+# 的实际状态全部写进 /root/log.txt（ext4 根分区，掉电不丢）。
+# 之后即使 USB 和 WiFi 都不通，也可以进 9008 用 firehose 把 p14 读出来分析。
+#
+# 两个要点：
+#   1) 用追加而不是覆盖 —— 如果设备在重启循环里，每一轮的日志都留下来。
+#   2) 除了持续 logread，还在 +10/+30/+60/+120/+240 秒各做一次状态快照，
+#      因为 logread 可能丢早起的行，而快照里的 dmesg 是完整的。
+
+START=12
+STOP=99
+
+LOG=/root/log.txt
+MAXSZ=2097152
+
+start() {
+	mkdir -p /root
+	mount | grep -q ' / .*[[:space:]]ro[,[:space:]]' && mount -o remount,rw /
+
+	# 超过 2MB 就轮转一次，避免把根分区写满
+	[ -f "$LOG" ] && [ "$(wc -c <"$LOG" 2>/dev/null || echo 0)" -gt "$MAXSZ" ] && \
+		mv -f "$LOG" "$LOG.1"
+
+	{
+		echo
+		echo "==================== wf2 boot $(date '+%F %T') ===================="
+		echo "uptime  : $(cat /proc/uptime 2>/dev/null)"
+		echo "cmdline : $(cat /proc/cmdline 2>/dev/null)"
+		echo "rootfs  : $(findmnt -n -o SOURCE,FSTYPE,OPTIONS / 2>/dev/null)"
+		echo "version : $(cat /etc/openwrt_release 2>/dev/null | tr '\n' ' ')"
+		echo "------------------------------------------------------------------"
+	} >>"$LOG" 2>&1
+	sync
+
+	# 持续 syslog（procd 会记录每个服务的 start/stop，是判断卡在哪一步的关键）
+	( logread -f >>"$LOG" 2>/dev/null ) &
+
+	# 分阶段状态快照
+	(
+		for s in 10 20 30 60 120; do
+			sleep "$s"
+			{
+				echo
+				echo "########## snapshot uptime=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)s ##########"
+				echo "--- dmesg ---"
+				dmesg 2>/dev/null | tail -400
+				echo "--- logread ---"
+				logread 2>/dev/null | tail -300
+				echo "--- ip addr ---"
+				ip -o addr 2>/dev/null
+				echo "--- netdevs ---"
+				ls /sys/class/net 2>/dev/null
+				echo "--- udc ---"
+				ls /sys/class/udc 2>/dev/null
+				echo "--- iw dev ---"
+				iw dev 2>/dev/null
+				echo "--- iw phy info (head) ---"
+				iw phy 2>/dev/null | head -30
+				echo "--- uci show wireless ---"
+				uci -q show wireless 2>/dev/null
+				echo "--- uci show network ---"
+				uci -q show network 2>/dev/null
+				echo "--- br-lan ---"
+				brctl show 2>/dev/null
+				echo "--- lsmod ---"
+				lsmod 2>/dev/null | head -40
+				echo "--- our own logs ---"
+				for f in /root/usbgadget.log /root/wifi.log; do
+					[ -f "$f" ] && { echo "== $f =="; tail -60 "$f"; }
+				done
+				echo "--- pstore (上次 panic 残留) ---"
+				ls -l /sys/fs/pstore 2>/dev/null
+				echo "--- free ---"
+				free 2>/dev/null
+			} >>"$LOG" 2>&1
+			sync
+		done
+		echo "########## boot logging finished ##########" >>"$LOG" 2>&1
+		sync
+	) &
+}

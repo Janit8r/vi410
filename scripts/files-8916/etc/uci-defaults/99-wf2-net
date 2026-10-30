@@ -5,7 +5,7 @@
 
 ( echo 'root'; sleep 1; echo 'root' ) | passwd root >/dev/null 2>&1
 
-for s in wf2-usbgadget wf2-wifiup dropbear; do
+for s in wf2-bootlog wf2-usbgadget wf2-wifiup dropbear; do
 	[ -x "/etc/init.d/$s" ] && /etc/init.d/$s enable
 done
 
