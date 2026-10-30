@@ -264,18 +264,27 @@ jobs:
         
         echo -e "$(nproc) thread compile"
 
+        LOG=$GITHUB_WORKSPACE/build.log
+        : > "$LOG"
+
         set +e
-        make -j$(nproc)
-        BUILD_EXIT=$?
+        make -j$(nproc) 2>&1 | tee -a "$LOG"
+        BUILD_EXIT=${PIPESTATUS[0]}
         set -e
 
         if [ $BUILD_EXIT -ne 0 ]; then
           echo "⚠️ 并行编译失败，切换到详细模式..."
           set +e
-          make -j8 V=s
-          VERBOSE_EXIT=$?
+          make -j8 V=s 2>&1 | tee -a "$LOG"
+          VERBOSE_EXIT=${PIPESTATUS[0]}
           set -e
-          [ $VERBOSE_EXIT -ne 0 ] && exit $VERBOSE_EXIT
+          if [ $VERBOSE_EXIT -ne 0 ]; then
+            echo ""
+            echo "===== BUILD ERROR DIGEST 开始 ====="
+            grep -nE "^make\[[0-9]+\]: \*\*\*|Error [0-9]+$|error:|No space left|Killed|not found|Permission denied" "$LOG" | head -60
+            echo "===== BUILD ERROR DIGEST 结束 ====="
+            exit $VERBOSE_EXIT
+          fi
           echo "✅ 详细模式编译成功"
         else
           echo "✅ 并行编译成功"
@@ -286,6 +295,14 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
       shell: bash
+
+    - name: Upload build log
+      if: failure()
+      uses: actions/upload-artifact@main
+      with:
+        name: build-log
+        path: build.log
+        if-no-files-found: ignore
 
     - name: df -hT
       if: (!cancelled())
